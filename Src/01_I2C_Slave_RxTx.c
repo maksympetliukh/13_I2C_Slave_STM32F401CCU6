@@ -72,10 +72,14 @@ void I2C2_GPIO_Init(void){
 
 I2C_Handle_t i2c2;
 
-void I2C2_EV_IRQHandler(void) {I2C_IRQ_EV_Handler(&i2c2);}
-void I2C2_ER_IRQHandler(void) {I2C_IRQ_ER_Handler(&i2c2);}
+void I2C2_EV_IRQHandler(void) {
+	I2C_IRQ_EV_Handler(&i2c2);
+}
+void I2C2_ER_IRQHandler(void) {
+	I2C_IRQ_ER_Handler(&i2c2);
+}
 
-void I2C1_Init(void){
+void I2C2_Init(void){
     i2c2.pI2Cx = I2C2;
     I2C_ClockControl(I2C2, ENABLE);
 
@@ -86,6 +90,7 @@ void I2C1_Init(void){
 
     I2C_Init(&i2c2);
 }
+
 
 void I2C_ApplicationEventCallback(I2C_Handle_t *pI2C_Handle, uint8_t event){
     if(event == I2C_EV_ADDR_MATCH){
@@ -110,16 +115,29 @@ void I2C_ApplicationEventCallback(I2C_Handle_t *pI2C_Handle, uint8_t event){
     }
 }
 
+void I2C_Slave_EnableInterrupts(I2C_REG_t *pI2Cx){
+    pI2Cx->CR2 |= (1 << I2C_CR2_ITEVTEN);
+    pI2Cx->CR2 |= (1 << I2C_CR2_ITBUFEN);
+    pI2Cx->CR2 |= (1 << I2C_CR2_ITERREN);
+}
+
 int main(void){
     LED_Init();
     I2C2_GPIO_Init();
-    I2C1_Init();
+    I2C2_Init();
 
     I2C_IRQ_InterruptConfig(IRQ_NO_I2C2_EV, ENABLE);
     I2C_IRQ_InterruptConfig(IRQ_NO_I2C2_ER, ENABLE);
 
     I2C_PeripheralControl(I2C2, ENABLE);
     I2C_AckControl(I2C2, I2C_ACK_ENABLE);
+
+    I2C_Slave_EnableInterrupts(I2C2);
+
+    GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
+        Delay();
+        GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
+        Delay();
 
     while(1){
     	if(rx_flag == 1){
@@ -128,9 +146,9 @@ int main(void){
     		Delay();
     		GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
     		Delay();
-    	}
 
-    	if(rx_flag >= 2){
+    		rx_flag = 0;
+    	}else if(rx_flag >= 2){
     	   uint8_t blinks = rx_flag;
     	   rx_flag = 0;
     	   for(uint32_t i = 0; i < blinks; i++){
