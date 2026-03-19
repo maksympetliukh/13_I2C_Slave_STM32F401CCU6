@@ -20,19 +20,21 @@
 #include "gpio.h"
 #include "i2c.h"
 
-uint8_t tx = 0x01;
-uint8_t len = sizeof(tx);
-volatile uint8_t tx_done = 0;
-volatile uint8_t tx_phase = 0;
-volatile uint8_t rx_flag = 0;
+uint8_t tx[] = "World";
+uint8_t tx_len = 0;
+uint8_t rx[32];
+volatile uint8_t tx_started = 0;
+volatile uint8_t phase = 0;
+volatile uint8_t led_flag = 0;
+volatile uint8_t tx_index = 0;
 
-#define TX_LEN    0
-#define TX_DATA   1
+#define RXSTRING    0
+#define TXLEN       1
+#define TXDATA      2
 
 #define SLAVE_ADDR 0x55
 
 void Delay(void){for(volatile uint32_t i = 0; i < 200000; i++);}
-void sDelay(void){for(volatile uint32_t i = 0; i < 100000; i++);}
 
 void LED_Init(void){
     GPIO_Handle_t led;
@@ -93,35 +95,66 @@ void I2C2_Init(void){
 
 
 void I2C_ApplicationEventCallback(I2C_Handle_t *pI2C_Handle, uint8_t event){
-    if(event == I2C_EV_ADDR_MATCH){
-        rx_flag = 1;
+    if (event == I2C_EV_ADDR_MATCH){
 
-    }else if(event == I2C_EV_DATA_REQ){
-        if(tx_done == 0){
-            I2C_Slave_Transmit(I2C2, len);
-            tx_done = 1;
+        uint32_t sr2 = pI2C_Handle->pI2Cx->SR2;
+
+        if(sr2 & (1 << I2C_SR2_TRA)){
+            phase = TXLEN;
+            tx_index = 0;
+            tx_started = 1;
+            led_flag = 1;
         }else{
-            I2C_Slave_Transmit(I2C2, tx);
-            tx_done = 0;
-            rx_flag = 2;
+            phase = RXSTRING;
+            tx_started = 0;
+            tx_index = 0;
+            led_flag = 1;
         }
+    }else if(event == I2C_EV_DATA_RCV){
+        if(phase == RXSTRING){
+            volatile uint8_t dummy = I2C_Slave_Receive(pI2C_Handle->pI2Cx);
+            led_flag = 0;
+        }
+    }else if(event == I2C_EV_DATA_REQ){
+        if(phase == TXLEN){
+            I2C_Slave_Transmit(pI2C_Handle->pI2Cx, tx_len);
+            phase = TXDATA;
+            tx_index = 0;
+            led_flag = 0;
 
+        }else if(phase == TXDATA){
+            if(tx_index < tx_len){
+                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, tx[tx_index++]);
+            }else{
+                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, 0xFF);
+                led_flag = 0;
+            }
+        }
     }else if(event == I2C_EV_STOP){
-        tx_done = 0;
-        rx_flag = 3;
+
+        tx_started = 0;
+        tx_index = 0;
+        phase = RXSTRING;
+        led_flag = 0;
+
     }else if(event == I2C_ERROR_AF){
-        tx_done = 0;
-        rx_flag = 4;
+
+        tx_started = 0;
+        tx_index = 0;
+        phase = RXSTRING;
+        led_flag = 3;
+
+    }else{
+        led_flag = 10;
+        phase = RXSTRING;
+        tx_started = 0;
+        tx_index = 0;
     }
 }
 
-void I2C_Slave_EnableInterrupts(I2C_REG_t *pI2Cx){
-    pI2Cx->CR2 |= (1 << I2C_CR2_ITEVTEN);
-    pI2Cx->CR2 |= (1 << I2C_CR2_ITBUFEN);
-    pI2Cx->CR2 |= (1 << I2C_CR2_ITERREN);
-}
-
 int main(void){
+	tx_len = strlen((char*)tx);
+
     LED_Init();
     I2C2_GPIO_Init();
     I2C2_Init();
@@ -135,22 +168,15 @@ int main(void){
     I2C_Slave_EnableInterrupts(I2C2);
 
     GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
-        Delay();
-        GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
-        Delay();
+    Delay();
+    GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
+    Delay();
 
     while(1){
-    	if(rx_flag == 1){
 
-    		GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
-    		Delay();
-    		GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
-    		Delay();
-
-    		rx_flag = 0;
-    	}else if(rx_flag >= 2){
-    	   uint8_t blinks = rx_flag;
-    	   rx_flag = 0;
+    	if(led_flag >= 1){
+    	   uint8_t blinks = led_flag;
+    	   led_flag = 0;
     	   for(uint32_t i = 0; i < blinks; i++){
     	    GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
     	    Delay();

@@ -75,6 +75,7 @@ void I2C_Slave_Transmit(I2C_REG_t *pI2Cx,  uint8_t data);
 uint8_t I2C_Slave_Receive(I2C_REG_t *pI2Cx);
 void I2C_CloseTransmission(I2C_Handle_t *pI2C_Handle);
 void I2C_CLoseReception(I2C_Handle_t *pI2C_Handle);
+void I2C_Slave_EnableInterrupts(I2C_REG_t *pI2Cx);
 
 /*
  * I2C Flags
