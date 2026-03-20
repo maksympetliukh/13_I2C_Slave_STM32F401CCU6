@@ -19,33 +19,36 @@
 #include "stm32f401xx.h"
 #include "gpio.h"
 #include "i2c.h"
+#include <string.h>
 
-uint8_t tx[] = "World";
-uint8_t tx_len = 0;
-uint8_t rx[32];
-volatile uint8_t tx_started = 0;
+uint8_t my_response[] = "World";
+uint8_t rx_buffer[32];
+uint8_t rx_index = 0;
+uint8_t tx_index = 0;
 volatile uint8_t phase = 0;
 volatile uint8_t led_flag = 0;
-volatile uint8_t tx_index = 0;
 
-#define RXSTRING    0
-#define TXLEN       1
-#define TXDATA      2
+#define PHASE_IDLE 0
+#define PHASE_RX_STRING 1
+#define PHASE_TX_LENGTH 2
+#define PHASE_TX_DATA 3
 
 #define SLAVE_ADDR 0x55
 
-void Delay(void){for(volatile uint32_t i = 0; i < 200000; i++);}
+void Delay(void) {
+    for(volatile uint32_t i = 0; i < 250000; i++);
+}
 
-void LED_Init(void){
+void LED_Init(void) {
     GPIO_Handle_t led;
     led.pGPIOx = GPIOC;
     GPIO_ClockControl(GPIOC, ENABLE);
 
-    led.GPIOx_CFG.pin_number     = GPIO_PIN_13;
-    led.GPIOx_CFG.pin_mode       = GPIO_MODE_OUT;
-    led.GPIOx_CFG.pin_op_type    = GPIO_OUT_PP;
+    led.GPIOx_CFG.pin_number = GPIO_PIN_13;
+    led.GPIOx_CFG.pin_mode = GPIO_MODE_OUT;
+    led.GPIOx_CFG.pin_op_type = GPIO_OUT_PP;
     led.GPIOx_CFG.pin_pu_pd_ctrl = GPIO_NO_PUPD;
-    led.GPIOx_CFG.pin_speed      = GPIO_OSPEED_HIGH;
+    led.GPIOx_CFG.pin_speed = GPIO_OSPEED_HIGH;
 
     GPIO_Init(&led);
     GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
@@ -61,12 +64,12 @@ void I2C2_GPIO_Init(void){
     i2c_gpio.GPIOx_CFG.pin_speed = GPIO_OSPEED_HIGH;
     i2c_gpio.GPIOx_CFG.pin_pu_pd_ctrl = GPIO_PIN_PU;
 
-    //SDA
+    // SDA - PB3
     i2c_gpio.GPIOx_CFG.pin_alt_func_mode = 9;
     i2c_gpio.GPIOx_CFG.pin_number = GPIO_PIN_3;
     GPIO_Init(&i2c_gpio);
 
-    //SCL
+    // SCL - PB10
     i2c_gpio.GPIOx_CFG.pin_alt_func_mode = 4;
     i2c_gpio.GPIOx_CFG.pin_number = GPIO_PIN_10;
     GPIO_Init(&i2c_gpio);
@@ -74,11 +77,12 @@ void I2C2_GPIO_Init(void){
 
 I2C_Handle_t i2c2;
 
-void I2C2_EV_IRQHandler(void) {
-	I2C_IRQ_EV_Handler(&i2c2);
+void I2C2_EV_IRQHandler(void){
+    I2C_IRQ_EV_Handler(&i2c2);
 }
-void I2C2_ER_IRQHandler(void) {
-	I2C_IRQ_ER_Handler(&i2c2);
+
+void I2C2_ER_IRQHandler(void){
+    I2C_IRQ_ER_Handler(&i2c2);
 }
 
 void I2C2_Init(void){
@@ -93,68 +97,56 @@ void I2C2_Init(void){
     I2C_Init(&i2c2);
 }
 
-
 void I2C_ApplicationEventCallback(I2C_Handle_t *pI2C_Handle, uint8_t event){
-    if (event == I2C_EV_ADDR_MATCH){
-
+    if(event == I2C_EV_ADDR_MATCH){
         uint32_t sr2 = pI2C_Handle->pI2Cx->SR2;
 
-        if(sr2 & (1 << I2C_SR2_TRA)){
-            phase = TXLEN;
-            tx_index = 0;
-            tx_started = 1;
-            led_flag = 1;
-        }else{
-            phase = RXSTRING;
-            tx_started = 0;
-            tx_index = 0;
-            led_flag = 1;
-        }
-    }else if(event == I2C_EV_DATA_RCV){
-        if(phase == RXSTRING){
-            volatile uint8_t dummy = I2C_Slave_Receive(pI2C_Handle->pI2Cx);
-            led_flag = 0;
-        }
-    }else if(event == I2C_EV_DATA_REQ){
-        if(phase == TXLEN){
-            I2C_Slave_Transmit(pI2C_Handle->pI2Cx, tx_len);
-            phase = TXDATA;
-            tx_index = 0;
-            led_flag = 0;
+        rx_index = 0;
+        tx_index = 0;
 
-        }else if(phase == TXDATA){
-            if(tx_index < tx_len){
-                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, tx[tx_index++]);
+        if(sr2 & (1 << I2C_SR2_TRA)) {
+            phase = PHASE_TX_LENGTH;
+            I2C_Slave_Transmit(pI2C_Handle->pI2Cx, (uint8_t)strlen((char*)my_response));
+            phase = PHASE_TX_DATA;
+        }else{
+            phase = PHASE_RX_STRING;
+        }
+        led_flag = 1;
+
+    }else if(event == I2C_EV_DATA_RCV) {
+        if (phase == PHASE_RX_STRING) {
+
+            if (rx_index < 31) {
+                rx_buffer[rx_index++] = I2C_Slave_Receive(pI2C_Handle->pI2Cx);
             }else{
-                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, 0xFF);
-                led_flag = 0;
+                (void)I2C_Slave_Receive(pI2C_Handle->pI2Cx);
             }
         }
-    }else if(event == I2C_EV_STOP){
-
-        tx_started = 0;
+    }else if(event == I2C_EV_DATA_REQ) {
+        if (phase == PHASE_TX_DATA) {
+            uint8_t len = strlen((char*)my_response);
+            if(tx_index < len) {
+                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, my_response[tx_index++]);
+            }else{
+                I2C_Slave_Transmit(pI2C_Handle->pI2Cx, 0xFF);
+            }
+        }
+    }else if(event == I2C_EV_STOP) {
+        phase = PHASE_IDLE;
+        rx_index = 0;
         tx_index = 0;
-        phase = RXSTRING;
         led_flag = 0;
-
-    }else if(event == I2C_ERROR_AF){
-
-        tx_started = 0;
+    }else if(event == I2C_ERROR_AF) {
+        phase = PHASE_IDLE;
+        rx_index = 0;
         tx_index = 0;
-        phase = RXSTRING;
         led_flag = 3;
-
-    }else{
-        led_flag = 10;
-        phase = RXSTRING;
-        tx_started = 0;
-        tx_index = 0;
+    } else {
+        led_flag = 5;
     }
 }
 
-int main(void){
-	tx_len = strlen((char*)tx);
-
+int main(void) {
     LED_Init();
     I2C2_GPIO_Init();
     I2C2_Init();
@@ -164,7 +156,6 @@ int main(void){
 
     I2C_PeripheralControl(I2C2, ENABLE);
     I2C_AckControl(I2C2, I2C_ACK_ENABLE);
-
     I2C_Slave_EnableInterrupts(I2C2);
 
     GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
@@ -173,16 +164,17 @@ int main(void){
     Delay();
 
     while(1){
+        if(led_flag > 0) {
+            uint8_t cnt = led_flag;
+            led_flag = 0;
 
-    	if(led_flag >= 1){
-    	   uint8_t blinks = led_flag;
-    	   led_flag = 0;
-    	   for(uint32_t i = 0; i < blinks; i++){
-    	    GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
-    	    Delay();
-    	    GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
-    	    Delay();
-    	   }
-    	}
+            for(uint32_t i = 0; i < cnt; i++) {
+                GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
+                Delay();
+                GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
+                Delay();
+            }
+        }
     }
 }
+
