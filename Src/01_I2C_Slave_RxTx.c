@@ -22,7 +22,7 @@
 #include <string.h>
 
 uint8_t my_response[] = "World";
-uint8_t rx_buffer[32];
+uint8_t rx_buffer[8];
 uint8_t rx_index = 0;
 uint8_t tx_index = 0;
 volatile uint8_t phase = 0;
@@ -156,7 +156,7 @@ int main(void) {
 
     I2C_PeripheralControl(I2C2, ENABLE);
     I2C_AckControl(I2C2, I2C_ACK_ENABLE);
-    I2C_Slave_EnableInterrupts(I2C2);
+    I2C_Slave_EnableInterrupts(I2C2, ENABLE);
 
     GPIO_WritePin(GPIOC, GPIO_PIN_13, RESET);
     Delay();
